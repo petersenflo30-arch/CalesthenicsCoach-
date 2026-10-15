@@ -39,9 +39,32 @@ svg{width:100%;height:auto}
 </style>
 </head>
 <body>
-<main id="m"></main>
+<main id="m">
+  <section class="card" id="boot-fallback" style="margin:auto;max-width:520px;width:100%;text-align:center">
+    <div style="font-size:42px;margin-bottom:8px">💪</div>
+    <h1 style="font-size:23px;margin-bottom:10px">Calisthenics Coach</h1>
+    <p>Die App wird geladen …</p>
+    <p class="mut">Falls dieser Bildschirm stehen bleibt, unterstützt die Vorschau möglicherweise kein JavaScript. Öffne die Datei in Safari oder veröffentliche sie über GitHub Pages.</p>
+  </section>
+  <noscript><section class="card" style="max-width:520px;margin:auto"><h2>JavaScript ist deaktiviert</h2><p>Diese Trainings-App benötigt JavaScript. Öffne die Datei in einem Browser, der JavaScript ausführt.</p></section></noscript>
+</main>
 <div id="nav"></div>
 <script>
+function showFatalError(message) {
+  const root = document.getElementById('m');
+  if (!root) return;
+  root.innerHTML = '';
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.style.cssText = 'margin:auto;max-width:520px;width:100%';
+  const title = document.createElement('h1'); title.style.fontSize = '23px'; title.textContent = 'Die App konnte nicht starten';
+  const info = document.createElement('p'); info.textContent = 'Der Start ist auf einen Fehler gestoßen. Die App zeigt jetzt eine Meldung statt eines leeren schwarzen Bildschirms.';
+  const detail = document.createElement('pre'); detail.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;color:var(--mut);font-size:12px'; detail.textContent = String(message || 'Unbekannter Fehler');
+  const tip = document.createElement('p'); tip.textContent = 'Wenn du mir diese Fehlermeldung schickst, kann ich den konkreten Fehler beheben.';
+  card.append(title, info, detail, tip); root.appendChild(card);
+}
+window.addEventListener('error', event => { showFatalError(event.message || 'JavaScript-Fehler'); });
+window.addEventListener('unhandledrejection', event => { showFatalError(event.reason && (event.reason.stack || event.reason.message) || event.reason || 'Fehler beim Laden'); });
 const BASE = {
   'Push': [['Dips',3,'6–12',90],['Liegestütze auf Parallettes',3,'8–15',75],['Kurzhantel-Schulterdrücken',3,'8–12',75],['Langhantel-Bankdrücken',3,'6–10',90],['Trizepsdrücken (Kurzhantel)',2,'10–15',60]],
   'Pull': [['Klimmzüge',4,'5–10',90],['Langhantel-Rudern',3,'8–12',90],['Kurzhantel-Rudern',3,'8–12',75],['Bizeps-Curls (Kurzhantel)',3,'10–12',60]],
@@ -91,7 +114,7 @@ async function init() {
   try { const u = await claude.use("user"), db = await claude.use("db"); if (u && db) { DB = db; const id = await u.id(); ref = db.collection("data/users/" + id).doc("coach"); mref = db.collection("members").doc(id); OWNER = await u.isOwner(); } } catch (e) {}
   const loadLocal = () => { try { const l = localStorage.getItem('coach'); if (l) S = Object.assign(S, JSON.parse(l)); } catch (e) {} };
   try { if (ref) { const d = await ref.get(); if (d.exists) S = Object.assign(S, d.data()); else loadLocal(); } else loadLocal(); } catch (e) { loadLocal(); }
-  if (S.profile && !S.checks.length) S.checks.push({ d: today(), t: { ...S.profile.t } });
+  if (S.profile && !S.checks.length) S.checks.push({ d: today(), t: { ...S.profile.t }, baseline: true });
   buildPlan(); if (!S.profile) view = 'setup'; render();
 }
 async function save() {
@@ -202,24 +225,41 @@ function profileView() {
   $m.appendChild(btn('Wochenziel ändern (aktuell ' + S.goal + ')', () => { S.goal = S.goal >= 6 ? 2 : S.goal + 1; save(); render(); }, 'g'));
   $m.appendChild(btn('📋 Daten sichern (in Zwischenablage kopieren)', () => { try { navigator.clipboard.writeText(JSON.stringify(S)); alert('Kopiert! Füge es in eine Notiz ein.'); } catch (e) { alert('Kopieren nicht möglich.'); } }, 'g'));
 }
-const firstMon = (y, m) => { const d = new Date(y, m, 1); d.setDate(1 + (8 - d.getDay()) % 7); return d; };
+const firstMon = (y, m) => { const d = new Date(y, m, 1); d.setDate(1 + ((8 - d.getDay()) % 7)); return d; };
 const TN = { pu: 'Klimmzüge', pp: 'Liegestütze', dp: 'Dips', sq: 'Kniebeugen', pl: 'Plank (Sek.)' };
-function checkDone() { return S.checks.some(c => c.d.slice(0, 7) === today().slice(0, 7)); }
+const CHECK_LABELS = { ...TN, mu: 'Saubere Muscle-ups', hs: 'Wand-Handstand (Sek.)', plc: 'Tuck Planche (Sek.)' };
+const CHECK_HINTS = { mu: 'Nur saubere Wiederholungen zählen; ohne Kipping.', hs: 'Brust zur Wand, kontrolliert und schmerzfrei halten.', plc: 'Tuck Planche mit gestreckten Armen; Zeit nur bei sauberer Form.' };
+function progressRows(checks) {
+  if (!checks || !checks.length) return [];
+  const now = checks[checks.length - 1].t || {}, prev = checks.length > 1 ? checks[checks.length - 2].t || {} : null;
+  return Object.keys(CHECK_LABELS).filter(k => now[k] != null).map(k => {
+    const a = prev ? +(prev[k] || 0) : null, b = +(now[k] || 0);
+    const pct = a !== null && a > 0 ? Math.round((b - a) / a * 100) : null;
+    return { label: CHECK_LABELS[k], value: b, pct, delta: a === null ? null : b - a };
+  });
+}
+function checkDone() { return S.checks.some(c => c.d.slice(0, 7) === today().slice(0, 7) && !c.baseline && c.t && ('mu' in c.t || 'hs' in c.t || 'plc' in c.t)); }
 function dueNow() { if (!S.profile) return false; const t = new Date(); return today() >= dstr(firstMon(t.getFullYear(), t.getMonth())) && !checkDone(); }
 function nextCheck() { const t = new Date(); let f = firstMon(t.getFullYear(), t.getMonth()); if (checkDone() || dstr(f) < today()) f = firstMon(t.getFullYear(), t.getMonth() + 1); return f; }
 function checkView() {
   const last = S.checks[S.checks.length - 1] ? S.checks[S.checks.length - 1].t : S.profile.t, F = {};
   $m.appendChild(el('h1', '📋 Monatscheck'));
-  $m.appendChild(el('div', 'Jeden ersten Montag im Monat testest du, wie stark du bist. Mach jeden Test sauber und so oft wie möglich am Stück, dann trage den Wert ein. Danach passe ich deinen Plan an.', 'hint'));
-  Object.keys(TN).forEach(k => {
-    const c = el('div', null, 'card'); c.appendChild(el('label', TN[k] + ' (letzter Wert: ' + (last[k] || 0) + ')', 'mut'));
-    const i = el('input'); i.type = 'number'; i.inputMode = 'numeric'; i.placeholder = String(last[k] || 0); i.style.marginTop = '6px'; c.appendChild(i); F[k] = i; $m.appendChild(c);
+  $m.appendChild(el('div', 'Am ersten Montag des Monats testest du deine Kraft und Skills. Teste ausgeruht, mit sauberer Technik und ohne Schmerzen. Deine Ergebnisse aktualisieren deine Basiswerte und passen den Standard-Trainingsplan an.', 'hint'));
+  Object.keys(CHECK_LABELS).forEach(k => {
+    const c = el('div', null, 'card');
+    c.appendChild(el('label', CHECK_LABELS[k] + ' (letzter Wert: ' + (last[k] || 0) + ')', 'mut'));
+    if (CHECK_HINTS[k]) c.appendChild(el('div', CHECK_HINTS[k], 'mut'));
+    const i = el('input'); i.type = 'number'; i.min = '0'; i.inputMode = 'numeric'; i.placeholder = String(last[k] || 0); i.style.marginTop = '6px'; c.appendChild(i); F[k] = i; $m.appendChild(c);
   });
   const wc = el('div', null, 'card'); wc.appendChild(el('label', 'Körpergewicht (kg, optional)', 'mut')); const wi = el('input'); wi.type = 'number'; wi.inputMode = 'decimal'; wi.style.marginTop = '6px'; wc.appendChild(wi); $m.appendChild(wc);
-  $m.appendChild(btn('✓ Check speichern', () => {
-    const t = {}; Object.keys(TN).forEach(k => { const v = F[k].value === '' ? (last[k] || 0) : (+F[k].value || 0); t[k] = v; });
-    S.checks.push({ d: today(), t }); S.profile.t = t;
-    const kg = parseFloat(String(wi.value).replace(',', '.')); if (kg) { S.profile.kg = kg; S.bw = S.bw.filter(x => x.d !== today()).concat([{ d: today(), w: kg }]); }
+  $m.appendChild(btn('✓ Check speichern & Plan anpassen', () => {
+    const t = {};
+    Object.keys(CHECK_LABELS).forEach(k => { const v = F[k].value === '' ? (last[k] || 0) : Math.max(0, +F[k].value || 0); t[k] = v; });
+    S.checks.push({ d: today(), t, monthly: true });
+    S.profile.t = { pu: t.pu, pp: t.pp, dp: t.dp, sq: t.sq, pl: t.pl };
+    // Der automatisch anpassbare Standardplan nutzt die neuesten Kraftwerte.
+    if (S.aiPlan) { S.aiPlan = null; S.plan = {}; }
+    const kg = parseFloat(String(wi.value).replace(',', '.')); if (kg > 0) { S.profile.kg = kg; S.bw = S.bw.filter(x => x.d !== today()).concat([{ d: today(), w: kg }]); }
     buildPlan(); save(); go('stats');
   }));
   $m.appendChild(btn('Zurück', () => go('train'), 'g'));
@@ -502,7 +542,7 @@ function setupView() {
     if (first) {
       if (t.pu >= 10) sk('mu').lvl = Math.max(sk('mu').lvl, 1);
       if (t.sq >= 25) sk('ps').lvl = Math.max(sk('ps').lvl, 1);
-      S.checks.push({ d: today(), t: { ...t } });
+      S.checks.push({ d: today(), t: { ...t }, baseline: true });
     }
     const fx = SK.find(x => x[1] === SU.focus); S.focus = fx ? fx[0] : null;
     SU = null; suStep = 0; buildPlan(); save(); go(first ? 'train' : 'profile');
@@ -554,6 +594,18 @@ function home() {
   const xb = el('div', null, 'bar'), xf = el('i'); xf.style.width = (xi.cur / xi.need * 100) + '%'; xb.appendChild(xf); xc.appendChild(xb);
   xc.appendChild(el('div', xi.xp + ' XP gesamt · noch ' + (xi.need - xi.cur) + ' XP bis Level ' + (xi.lvl + 1), 'mut')); $m.appendChild(xc);
   $m.appendChild(el('div', '💬 ' + QUOTES[Math.floor(Date.now() / 864e5) % QUOTES.length], 'hint'));
+  if (S.checks && S.checks.length) {
+    const pc = el('div', null, 'card'); pc.appendChild(el('h2', '📈 Dein Fortschritt'));
+    const rows = progressRows(S.checks);
+    if (rows.length) rows.forEach(x => {
+      const r = el('div', null, 'set'); r.appendChild(el('span', x.label, 'mut'));
+      const val = x.pct === null ? String(x.value) : (x.pct > 0 ? '+' : '') + x.pct + '%';
+      r.appendChild(el('b', val + (x.label.includes('(Sek.)') ? ' s' : x.label.includes('Handstand') || x.label.includes('Planche') ? ' s' : '')));
+      pc.appendChild(r);
+    });
+    pc.appendChild(el('div', 'Werte aus deinem letzten Monatscheck. Nach jedem neuen Check siehst du die Veränderung zum vorherigen.', 'mut'));
+    $m.appendChild(pc);
+  }
   const c = el('div', null, 'card'); c.appendChild(el('h2', 'Diese Woche: ' + n + ' von ' + S.goal + ' Trainings'));
   const b = el('div', null, 'bar'), f = el('i'); f.style.width = Math.min(100, n / S.goal * 100) + '%'; b.appendChild(f); c.appendChild(b);
   let st = n >= S.goal ? 1 : 0;
@@ -725,11 +777,15 @@ function stats() {
   cc.appendChild(el('div', dueNow() ? '⚠️ Fällig! Mach den Check, um weiter zu trainieren.' : 'Nächster Check: ' + nextCheck().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }), 'mut'));
   if (dueNow()) cc.appendChild(btn('Check jetzt machen', () => go('check')));
   if (cs.length >= 2) {
-    const f = cs[0].t, ks = Object.keys(f).filter(k => f[k] > 0), idx = cs.map(x => ks.length ? ks.reduce((a, k) => a + (x.t[k] || 0) / f[k] * 100, 0) / ks.length : 100);
+    const f = cs[0].t, ks = Object.keys(CHECK_LABELS).filter(k => (f[k] || 0) > 0), idx = cs.map(x => ks.length ? ks.reduce((a, k) => a + (x.t[k] || 0) / f[k] * 100, 0) / ks.length : 100);
     const h = el('div', 'Stärke-Index (erster Check = 100 %)', 'mut'); h.style.marginTop = '10px'; cc.appendChild(h); cc.appendChild(line(idx));
-    cc.appendChild(el('div', new Date(cs[0].d + 'T12:00').toLocaleDateString('de-DE') + '  →  ' + new Date(cs[cs.length - 1].d + 'T12:00').toLocaleDateString('de-DE'), 'mut'));
-    const l = cs[cs.length - 1].t; Object.keys(TN).forEach(k => { const d = (l[k] || 0) - (f[k] || 0), r = el('div', null, 'set'); r.appendChild(el('span', TN[k])); r.appendChild(el('span', (f[k] || 0) + ' → ' + (l[k] || 0) + ' (' + (d > 0 ? '+' : '') + d + ')', 'mut')); cc.appendChild(r); });
-  } else cc.appendChild(el('div', 'Das Diagramm erscheint nach deinem 2. Monatscheck.', 'mut'));
+    cc.appendChild(el('div', new Date(cs[0].d + 'T12:00').toLocaleDateString('de-DE') + ' → ' + new Date(cs[cs.length - 1].d + 'T12:00').toLocaleDateString('de-DE'), 'mut'));
+  } else cc.appendChild(el('div', 'Die prozentuale Veränderung erscheint ab deinem 2. Monatscheck.', 'mut'));
+  progressRows(cs).forEach(x => {
+    const r = el('div', null, 'set'); r.appendChild(el('span', x.label));
+    const txt = x.pct === null ? String(x.value) + ' (Basiswert)' : String(x.value) + ' · ' + (x.pct > 0 ? '+' : '') + x.pct + '% seit letztem Check';
+    r.appendChild(el('span', txt, 'mut')); cc.appendChild(r);
+  });
   $m.appendChild(cc);
   const b0 = el('div', null, 'card'); b0.appendChild(el('h2', '⚖️ Körpergewicht'));
   const r0 = el('div', null, 'row'), bi = el('input'), bs = btn('Speichern', () => { const v = parseFloat(bi.value.replace(',', '.')); if (isNaN(v)) return; S.bw = S.bw.filter(x => x.d !== today()); S.bw.push({ d: today(), w: v }); save(); render(); });
@@ -749,7 +805,7 @@ function stats() {
   [...new Set(S.log.map(x => x.d + '|' + x.day))].sort().reverse().slice(0, 12).forEach(key => { const [d, dy] = key.split('|'), ss = S.log.filter(x => x.d === d && x.day === dy), vol = ss.reduce((a, x) => a + x.w * x.r, 0), r = el('div', null, 'set'); r.appendChild(el('span', new Date(d + 'T12:00').toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }) + ' · ' + dy)); r.appendChild(el('span', ss.length + ' Sätze' + (vol ? ' · ' + Math.round(vol) + ' kg' : ''), 'mut')); hc.appendChild(r); });
   $m.appendChild(hc);
 }
-init();
+init().catch(err => showFatalError(err && (err.stack || err.message) || err));
 </script>
 </body>
 </html>
