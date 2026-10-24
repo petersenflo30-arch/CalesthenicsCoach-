@@ -137,7 +137,7 @@ async function init() {
   try { const u = await claude.use("user"), db = await claude.use("db"); if (u && db) { DB = db; const id = await u.id(); ref = db.collection("data/users/" + id).doc("coach"); mref = db.collection("members").doc(id); OWNER = await u.isOwner(); } } catch (e) {}
   const loadLocal = () => { try { const l = localStorage.getItem('coach'); if (l) S = Object.assign(S, JSON.parse(l)); } catch (e) {} };
   try { if (ref) { const d = await ref.get(); if (d.exists) S = Object.assign(S, d.data()); else loadLocal(); } else loadLocal(); } catch (e) { loadLocal(); }
-  if (S.profile && !S.checks.length) S.checks.push({ d: today(), t: { ...S.profile.t }, baseline: true });
+  if (S.profile && !S.checks.length && Object.values(S.profile.t || {}).some(v => Number(v) > 0)) S.checks.push({ d: today(), t: { ...S.profile.t }, baseline: true });
   buildPlan(); if (!S.profile) view = 'setup'; render();
 }
 async function save() {
@@ -225,7 +225,8 @@ function buildPlan() {
 function profileView() {
   const p = S.profile; if (!p) { go('setup'); return; }
   $m.appendChild(el('h1', '👤 Profil'));
-  const c = el('div', null, 'card'); c.appendChild(el('div', p.name, 'big'));
+  $m.appendChild(el('div', 'Der Schnellstart funktioniert ohne persönliche Körperdaten. Wenn du möchtest, ergänzt du sie hier für eine genauere Anpassung.', 'hint'));
+  const c = el('div', null, 'card'); c.appendChild(el('div', p.name || 'Dein Profil', 'big'));
   const bw = S.bw.length ? S.bw[S.bw.length - 1].w : p.kg;
   [['Alter', p.age ? p.age + ' Jahre' : '–'], ['Körpergewicht', bw ? fmt(bw) + ' kg' : '–'], ['Größe', p.cm ? p.cm + ' cm' : '–'], ['Ziel', p.goal], ['Erfahrung', p.lvl], ['Ausrüstung', p.eq ? (EQLIST.filter(x => p.eq[x[0]]).map(x => x[1]).join(', ') || 'keine') : 'alles'], ['Wochenziel', S.goal + ' Trainings']].forEach(([k, v]) => { const r = el('div', null, 'set'); r.appendChild(el('span', k, 'mut')); r.appendChild(el('span', v)); c.appendChild(r); });
   $m.appendChild(c);
@@ -236,7 +237,7 @@ function profileView() {
   const z = el('div', null, 'card'); z.appendChild(el('h2', '📈 Bisher'));
   [['Trainings', days], ['Sätze', S.log.length], ['Skill-Stufen geschafft', lv]].forEach(([k, v]) => { const r = el('div', null, 'set'); r.appendChild(el('span', k, 'mut')); r.appendChild(el('span', String(v))); z.appendChild(r); });
   $m.appendChild(z);
-  $m.appendChild(btn('✏️ Profil & Werte bearbeiten', () => go('setup')));
+  $m.appendChild(btn('✏️ Profil ergänzen oder bearbeiten', () => go('setup')));
   $m.appendChild(btn('🧍 Körper-Check (BMI & Stärke)', () => go('body')));
   $m.appendChild(btn('🤖 KI-Trainingsplan erstellen', () => go('ai')));
   $m.appendChild(btn('🔊 Sprachansagen: ' + (S.voice === false ? 'aus' : 'an') + ' (tippen zum Wechseln)', () => { S.voice = S.voice === false ? true : false; save(); render(); }, 'g'));
@@ -554,7 +555,7 @@ function setupView() {
     SU = { name: p.name || '', age: p.age || '', kg: p.kg || '', sex: p.sex || '', cm: p.cm || '', goal: p.goal || '', lvl: p.lvl || '', focus: f ? f[1] : 'Keiner', eq: Object.assign({}, p.eq || {}), pu: p.t.pu || '', pp: p.t.pp || '', dp: p.t.dp || '', sq: p.t.sq || '', pl: p.t.pl || '', share: !!S.share };
     suStep = 0;
   }
-  const ST = [
+  const FULL_ST = [
     { k: 'name', q: 'Wie heißt du?', type: 'text', ph: 'Dein Name' },
     { k: 'age', q: 'Wie alt bist du?', type: 'number', ph: 'Jahre' },
     { k: 'sex', q: 'Bist du ein Junge oder ein Mädchen?', hint: 'Das brauche ich für den Körper-Check (Vergleichswerte).', opts: ['Junge / Mann', 'Mädchen / Frau', 'Keine Angabe'] },
@@ -570,6 +571,12 @@ function setupView() {
     { k: 'sq', q: 'Wie viele Kniebeugen ohne Gewicht schaffst du am Stück?', type: 'number', ph: 'Anzahl' },
     { k: 'pl', q: 'Wie lange hältst du die Plank?', type: 'number', ph: 'Sekunden' }
   ];
+  const QUICK_ST = [
+    { k: 'goal', q: 'Was ist dein Hauptziel?', opts: ['Muskelaufbau', 'Kraft', 'Skills lernen', 'Fit & gesund'] },
+    { k: 'lvl', q: 'Wie viel Trainingserfahrung hast du?', opts: ['Anfänger', 'Fortgeschritten', 'Profi'] },
+    { k: 'eq', q: 'Welches Equipment hast du?', hint: 'Wähle alles aus, was du nutzen kannst. Wenn du nichts auswählst, erstelle ich einen Plan nur mit Körpergewicht.' }
+  ];
+  const ST = S.profile ? FULL_ST : QUICK_ST;
   const st = ST[suStep], N = ST.length, last = suStep === N - 1;
   const finish = () => {
     const n = v => +String(v).replace(',', '.') || 0, first = !S.profile;
@@ -580,7 +587,7 @@ function setupView() {
     if (first) {
       if (t.pu >= 10) sk('mu').lvl = Math.max(sk('mu').lvl, 1);
       if (t.sq >= 25) sk('ps').lvl = Math.max(sk('ps').lvl, 1);
-      S.checks.push({ d: today(), t: { ...t }, baseline: true });
+      if (Object.values(t).some(v => v > 0)) S.checks.push({ d: today(), t: { ...t }, baseline: true });
     }
     const fx = SK.find(x => x[1] === SU.focus); S.focus = fx ? fx[0] : null;
     SU = null; suStep = 0; buildPlan(); save(); go(first ? 'train' : 'profile');
@@ -588,21 +595,21 @@ function setupView() {
   const next = () => { if (last) finish(); else { suStep++; render(); } };
   $m.appendChild(el('div', 'Frage ' + (suStep + 1) + ' von ' + N, 'mut'));
   const bar = el('div', null, 'bar'), fi = el('i'); fi.style.width = ((suStep + 1) / N * 100) + '%'; bar.appendChild(fi); $m.appendChild(bar);
-  if (suStep === 0 && !S.profile) $m.appendChild(el('div', '👋 Willkommen! Ich passe deinen Trainingsplan automatisch an dich an.', 'hint'));
+  if (suStep === 0 && !S.profile) $m.appendChild(el('div', '👋 In 3 kurzen Schritten zu deinem Trainingsplan. Persönliche Angaben kannst du später im Profil ergänzen.', 'hint'));
   $m.appendChild(el('h1', st.q));
   if (st.hint) $m.appendChild(el('div', st.hint, 'mut'));
   const big = (txt, f, on) => { const b = btn(txt, f, on ? '' : 'g'); b.style.fontSize = '17px'; b.style.padding = '15px'; return b; };
   if (st.opts) st.opts.forEach(o => $m.appendChild(big(o, () => { SU[st.k] = o; next(); }, SU[st.k] === o)));
   else if (st.k === 'eq') {
     EQLIST.forEach(([k, l]) => $m.appendChild(big((SU.eq[k] ? '☑  ' : '☐  ') + l, () => { SU.eq[k] = !SU.eq[k]; render(); }, SU.eq[k])));
-    $m.appendChild(btn('Weiter →', next));
+    $m.appendChild(btn(last ? '✓ Trainingsplan erstellen' : 'Weiter →', next));
   } else if (st.consent) {
     $m.appendChild(big((SU.share ? '☑  ' : '☐  ') + 'Ja, ich bin einverstanden', () => { SU.share = !SU.share; render(); }, SU.share));
     $m.appendChild(btn('✓ Plan für mich erstellen', next));
   } else {
     const i = el('input'); i.type = st.type; i.placeholder = st.ph || ''; if (st.type === 'number') i.inputMode = 'decimal'; else i.style.textAlign = 'left';
     i.value = SU[st.k]; i.oninput = () => { SU[st.k] = i.value; };
-    const go2 = () => { if (st.k === 'name' && !String(SU.name).trim()) { i.focus(); return; } next(); };
+    const go2 = () => next();
     i.onkeydown = e => { if (e.key === 'Enter') go2(); };
     $m.appendChild(i); setTimeout(() => { try { i.focus(); } catch (e) {} }, 100);
     $m.appendChild(btn(last ? '✓ Plan für mich erstellen' : 'Weiter →', go2));
@@ -626,7 +633,7 @@ function render() {
 
 function home() {
   const wk = mon(new Date()), n = new Set(S.log.filter(s => mon(s.d + 'T12:00') === wk).map(s => s.d + s.day)).size;
-  $m.appendChild(el('h1', '💪 Hallo' + (S.profile && S.profile.name ? ', ' + S.profile.name : '') + '!'));
+  $m.appendChild(el('h1', S.profile && S.profile.name ? '💪 Hallo, ' + S.profile.name + '!' : '💪 Dein Training'));
   if (S.profile) $m.appendChild(el('div', 'Dein Plan ist auf deine Werte angepasst ✔', 'mut'));
   const xi = xpInfo(), xc = el('div', null, 'card'); xc.appendChild(el('div', '⭐ Level ' + xi.lvl, 'big'));
   const xb = el('div', null, 'bar'), xf = el('i'); xf.style.width = (xi.cur / xi.need * 100) + '%'; xb.appendChild(xf); xc.appendChild(xb);
